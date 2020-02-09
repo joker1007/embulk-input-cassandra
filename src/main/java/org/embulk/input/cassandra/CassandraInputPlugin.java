@@ -319,6 +319,7 @@ public class CassandraInputPlugin implements InputPlugin {
   public TaskReport run(TaskSource taskSource, Schema schema, int taskIndex, PageOutput output) {
     PluginTask task = taskSource.loadTask(PluginTask.class);
     int concurrency = task.getConcurrency();
+    final Object lock = new Object();
 
     Cluster cluster = getCluster(task);
     try (Session session = cluster.newSession()) {
@@ -341,12 +342,10 @@ public class CassandraInputPlugin implements InputPlugin {
           partitionKeyResultSet.fetchMoreResults();
         }
 
-        if (Math.abs((long) partitionKeysRow.getPartitionKeyToken().getValue()) % concurrency
-            == taskIndex) {
-
+        long chunkNum = Math.abs((long) partitionKeysRow.getPartitionKeyToken().getValue()) % concurrency;
+        if (chunkNum == taskIndex) {
           Statement statement = bindStatement(prepared, partitionKeys, partitionKeysRow);
           ResultSetFuture future = session.executeAsync(statement);
-          Object lock = new Object();
           @SuppressWarnings("UnstableApiUsage")
           ListenableFuture<Object> transform =
               Futures.transformAsync(future, new AsyncPaging(pageBuilder, writers, lock));
