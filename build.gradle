@@ -24,6 +24,7 @@ dependencies {
     compile  "io.netty:netty-codec:4.0.44.Final"
     compile  "io.netty:netty-handler:4.0.44.Final"
     compile  "io.netty:netty-transport:4.0.44.Final"
+    compile "org.msgpack:msgpack-core:0.8.11"
     implementation("com.datastax.cassandra:cassandra-driver-core:3.7.+") {
         exclude module: 'netty-buffer'
         exclude module: 'netty-codec'

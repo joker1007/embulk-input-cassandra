@@ -141,6 +141,7 @@ public class CassandraInputPlugin implements InputPlugin {
       case VARINT:
       case SMALLINT:
       case COUNTER:
+      case TIME:
         return Types.LONG;
       case TEXT:
       case VARCHAR:

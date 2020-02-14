@@ -38,12 +38,17 @@ public class ColumnWriterFactory {
       case DATE:
         return new DateWriter(i);
       case TIMESTAMP:
-      return new TimestampWriter(i);
+        return new TimestampWriter(i);
+      case TIME:
+        return new TimeWriter(i);
       case BOOLEAN:
         return new BooleanWriter(i);
       case MAP:
+        return new MapWriter(i, cassandraDataType);
       case LIST:
+        return new ListWriter(i, cassandraDataType);
       case SET:
+        return new SetWriter(i, cassandraDataType);
       default:
         throw new RuntimeException("Unsupported cassandra data type");
     }
