@@ -18,13 +18,13 @@ import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select;
 import com.datastax.driver.core.querybuilder.Select.Selection;
 import com.datastax.driver.core.querybuilder.Select.Where;
-import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import java.net.InetSocketAddress;
 import java.util.List;
+import java.util.Optional;
 import java.util.StringJoiner;
 import java.util.concurrent.ExecutionException;
 import org.embulk.config.Config;
@@ -114,7 +114,7 @@ public class CassandraInputPlugin implements InputPlugin {
     }
 
     if (task.getUsername().isPresent()) {
-      builder.withCredentials(task.getUsername().get(), task.getPassword().orNull());
+      builder.withCredentials(task.getUsername().get(), task.getPassword().orElse(null));
     }
 
     if (task.getClustername().isPresent()) {
