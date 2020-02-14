@@ -19,6 +19,7 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Timestamp;
@@ -31,6 +32,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
 
@@ -93,7 +95,7 @@ public class TestCassandraInputPlugin
 
   private void setupBasic()
   {
-    IntStream.range(1, 80000).forEach(i -> {
+    IntStream.rangeClosed(1, 80000).forEach(i -> {
       Boolean bool = i % 2 == 0 ? true : null;
       Insert insert1 = QueryBuilder.insertInto("embulk_test", "test_basic")
           .value("id", "id-" + i)
@@ -111,7 +113,7 @@ public class TestCassandraInputPlugin
 
   private void setupComplex()
   {
-    IntStream.range(1, 100).forEach(i -> {
+    IntStream.rangeClosed(1, 100).forEach(i -> {
       List<String> list = new ArrayList<>();
       list.add(String.valueOf(i));
       list.add(String.valueOf(i + 1));
@@ -165,6 +167,9 @@ public class TestCassandraInputPlugin
     for (int i = 0; i < columnMetadatas.size(); i++) {
       assertEquals(columnMetadatas.get(i).getName(), schema.getColumnName(i));
     }
+
+    Stream<String> lines = Files.lines(outputPath);
+    assertEquals(80000, lines.count());
   }
 
   @Test
@@ -183,5 +188,8 @@ public class TestCassandraInputPlugin
     for (int i = 0; i < columnMetadatas.size(); i++) {
       assertEquals(columnMetadatas.get(i).getName(), schema.getColumnName(i));
     }
+
+    Stream<String> lines = Files.lines(outputPath);
+    assertEquals(100, lines.count());
   }
 }
