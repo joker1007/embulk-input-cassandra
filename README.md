@@ -1,6 +1,5 @@
 # Cassandra input plugin for Embulk
-
-TODO: Write short description here and build.gradle file.
+![Java CI](https://github.com/joker1007/embulk-input-cassandra/workflows/Java%20CI/badge.svg)
 
 ## Overview
 
