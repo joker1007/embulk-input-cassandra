@@ -2,12 +2,14 @@ package org.embulk.input.cassandra.writers;
 
 import com.datastax.driver.core.DataType;
 
-public class ColumnWriterFactory {
-
-  private ColumnWriterFactory() {
+public class ColumnWriterFactory
+{
+  private ColumnWriterFactory()
+  {
   }
 
-  public static ColumnWriter get(int i, DataType cassandraDataType) {
+  public static ColumnWriter get(int i, DataType cassandraDataType)
+  {
     switch (cassandraDataType.getName()) {
       case INT:
         return new IntWriter(i);

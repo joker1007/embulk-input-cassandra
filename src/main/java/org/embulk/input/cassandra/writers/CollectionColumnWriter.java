@@ -5,6 +5,10 @@ import com.datastax.driver.core.LocalDate;
 import com.datastax.driver.core.TypeTokens;
 import com.google.common.collect.ImmutableList;
 import com.google.common.reflect.TypeToken;
+import org.msgpack.value.Value;
+import org.msgpack.value.ValueFactory;
+import org.msgpack.value.ValueFactory.MapBuilder;
+
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.net.InetAddress;
@@ -14,20 +18,20 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import org.msgpack.value.Value;
-import org.msgpack.value.ValueFactory;
-import org.msgpack.value.ValueFactory.MapBuilder;
 
 @SuppressWarnings({"UnstableApiUsage", "rawtypes", "unchecked"})
-public abstract class CollectionColumnWriter extends ColumnWriter {
+public abstract class CollectionColumnWriter extends ColumnWriter
+{
   private DataType cassandraDataType;
 
-  public CollectionColumnWriter(int columnIndex, DataType cassandraDataType) {
+  public CollectionColumnWriter(int columnIndex, DataType cassandraDataType)
+  {
     super(columnIndex);
     this.cassandraDataType = cassandraDataType;
   }
 
-  protected List<TypeToken> getElementTypeTokens() {
+  protected List<TypeToken> getElementTypeTokens()
+  {
     switch (cassandraDataType.getName()) {
       case LIST:
       case SET:
@@ -42,7 +46,8 @@ public abstract class CollectionColumnWriter extends ColumnWriter {
     }
   }
 
-  private TypeToken getTypeToken(DataType cassandraDataType) {
+  private TypeToken getTypeToken(DataType cassandraDataType)
+  {
     switch (cassandraDataType.getName()) {
       case LIST:
         return getTypeTokenForList(cassandraDataType);
@@ -89,22 +94,26 @@ public abstract class CollectionColumnWriter extends ColumnWriter {
     }
   }
 
-  private TypeToken getTypeTokenForList(DataType listType) {
+  private TypeToken getTypeTokenForList(DataType listType)
+  {
     return TypeTokens.listOf(getTypeToken(listType.getTypeArguments().get(0)));
   }
 
-  private TypeToken getTypeTokenForSet(DataType setType) {
+  private TypeToken getTypeTokenForSet(DataType setType)
+  {
     return TypeTokens.listOf(getTypeToken(setType.getTypeArguments().get(0)));
   }
 
-  private TypeToken getTypeTokenForMap(DataType mapType) {
+  private TypeToken getTypeTokenForMap(DataType mapType)
+  {
     List<DataType> typeArguments = mapType.getTypeArguments();
     TypeToken keyType = getTypeToken(typeArguments.get(0));
     TypeToken valueType = getTypeToken(typeArguments.get(1));
     return TypeTokens.mapOf(keyType, valueType);
   }
 
-  protected Value convertListToMsgPack(List<Object> list) {
+  protected Value convertListToMsgPack(List<Object> list)
+  {
     if (list == null) {
       return ValueFactory.newNil();
     }
@@ -113,7 +122,8 @@ public abstract class CollectionColumnWriter extends ColumnWriter {
         list.stream().map(this::javaValueToMsgPack).collect(Collectors.toList()));
   }
 
-  protected Value convertSetToMsgPack(Set<Object> set) {
+  protected Value convertSetToMsgPack(Set<Object> set)
+  {
     if (set == null) {
       return ValueFactory.newNil();
     }
@@ -122,7 +132,8 @@ public abstract class CollectionColumnWriter extends ColumnWriter {
         set.stream().map(this::javaValueToMsgPack).collect(Collectors.toList()));
   }
 
-  protected Value convertMapToMsgPack(Map<Object, Object> map) {
+  protected Value convertMapToMsgPack(Map<Object, Object> map)
+  {
     if (map == null) {
       return ValueFactory.newNil();
     }
@@ -136,44 +147,61 @@ public abstract class CollectionColumnWriter extends ColumnWriter {
     return mapBuilder.build();
   }
 
-  private Value javaValueToMsgPack(Object value) {
+  private Value javaValueToMsgPack(Object value)
+  {
     if (value == null) {
       return ValueFactory.newNil();
     }
 
     if (value instanceof String) {
       return ValueFactory.newString((String) value);
-    } else if (value instanceof Byte) {
+    }
+    else if (value instanceof Byte) {
       return ValueFactory.newInteger((Byte) value);
-    } else if (value instanceof Integer) {
+    }
+    else if (value instanceof Integer) {
       return ValueFactory.newInteger((Integer) value);
-    } else if (value instanceof Long) {
+    }
+    else if (value instanceof Long) {
       return ValueFactory.newInteger((Long) value);
-    } else if (value instanceof BigDecimal) {
+    }
+    else if (value instanceof BigDecimal) {
       return ValueFactory.newString(((BigDecimal) value).toPlainString());
-    } else if (value instanceof InetAddress) {
+    }
+    else if (value instanceof InetAddress) {
       return ValueFactory.newString(((InetAddress) value).getHostAddress());
-    } else if (value instanceof BigInteger) {
+    }
+    else if (value instanceof BigInteger) {
       return ValueFactory.newInteger(((BigInteger) value).longValue());
-    } else if (value instanceof Boolean) {
+    }
+    else if (value instanceof Boolean) {
       return ValueFactory.newBoolean((Boolean) value);
-    } else if (value instanceof Float) {
+    }
+    else if (value instanceof Float) {
       return ValueFactory.newFloat((Float) value);
-    } else if (value instanceof Double) {
+    }
+    else if (value instanceof Double) {
       return ValueFactory.newFloat((Double) value);
-    } else if (value instanceof Date) {
+    }
+    else if (value instanceof Date) {
       return ValueFactory.newInteger(((Date) value).toInstant().toEpochMilli());
-    } else if (value instanceof LocalDate) {
+    }
+    else if (value instanceof LocalDate) {
       return ValueFactory.newInteger(((LocalDate) value).getMillisSinceEpoch());
-    } else if (value instanceof UUID) {
+    }
+    else if (value instanceof UUID) {
       return ValueFactory.newString(value.toString());
-    } else if (value instanceof List) {
+    }
+    else if (value instanceof List) {
       return convertListToMsgPack((List<Object>) value);
-    } else if (value instanceof Set) {
+    }
+    else if (value instanceof Set) {
       return convertSetToMsgPack((Set<Object>) value);
-    } else if (value instanceof Map) {
+    }
+    else if (value instanceof Map) {
       return convertMapToMsgPack((Map<Object, Object>) value);
-    } else {
+    }
+    else {
       throw new RuntimeException("Unsupported cassandra type");
     }
   }

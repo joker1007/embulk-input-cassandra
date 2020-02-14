@@ -22,11 +22,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import java.net.InetSocketAddress;
-import java.util.List;
-import java.util.Optional;
-import java.util.StringJoiner;
-import java.util.concurrent.ExecutionException;
 import org.embulk.config.Config;
 import org.embulk.config.ConfigDefault;
 import org.embulk.config.ConfigDiff;
@@ -49,57 +44,66 @@ import org.embulk.spi.type.Types;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class CassandraInputPlugin implements InputPlugin {
+import java.net.InetSocketAddress;
+import java.util.List;
+import java.util.Optional;
+import java.util.StringJoiner;
+import java.util.concurrent.ExecutionException;
+
+public class CassandraInputPlugin implements InputPlugin
+{
   private static Logger logger = LoggerFactory.getLogger(CassandraInputPlugin.class);
 
-  public interface PluginTask extends Task {
+  public interface PluginTask extends Task
+  {
     @Config("hosts")
     @ConfigDefault("[\"localhost\"]")
-    public List<String> getHosts();
+    List<String> getHosts();
 
     @Config("port")
     @ConfigDefault("9042")
-    public int getPort();
+    int getPort();
 
     @Config("username")
     @ConfigDefault("null")
-    public Optional<String> getUsername();
+    Optional<String> getUsername();
 
     @Config("password")
     @ConfigDefault("null")
-    public Optional<String> getPassword();
+    Optional<String> getPassword();
 
     @Config("cluster_name")
     @ConfigDefault("null")
-    public Optional<String> getClustername();
+    Optional<String> getClustername();
 
     @Config("concurrency")
     @ConfigDefault("1")
-    public Integer getConcurrency();
+    Integer getConcurrency();
 
     @Config("keyspace")
-    public String getKeyspace();
+    String getKeyspace();
 
     @Config("table")
-    public String getTable();
+    String getTable();
 
     @Config("select")
     @ConfigDefault("[]")
-    public List<String> getSelect();
+    List<String> getSelect();
 
     @Config("connect_timeout")
     @ConfigDefault("5000")
-    public int getConnectTimeout();
+    int getConnectTimeout();
 
     @Config("request_timeout")
     @ConfigDefault("12000")
-    public int getRequestTimeout();
+    int getRequestTimeout();
 
     @ConfigInject
-    public BufferAllocator getBufferAllocator();
+    BufferAllocator getBufferAllocator();
   }
 
-  private Cluster getCluster(PluginTask task) {
+  private Cluster getCluster(PluginTask task)
+  {
     Cluster.Builder builder = Cluster.builder();
     for (String host : task.getHosts()) {
       builder.addContactPointsWithPorts(new InetSocketAddress(host, task.getPort()));
@@ -121,11 +125,13 @@ public class CassandraInputPlugin implements InputPlugin {
     return builder.build();
   }
 
-  private TableMetadata getTableMetadata(Cluster cluster, PluginTask task) {
+  private TableMetadata getTableMetadata(Cluster cluster, PluginTask task)
+  {
     return cluster.getMetadata().getKeyspace(task.getKeyspace()).getTable(task.getTable());
   }
 
-  private static Type getEmbulkType(DataType cassandraDataType) {
+  private static Type getEmbulkType(DataType cassandraDataType)
+  {
     switch (cassandraDataType.getName()) {
       case INT:
       case BIGINT:
@@ -161,7 +167,8 @@ public class CassandraInputPlugin implements InputPlugin {
   }
 
   @Override
-  public ConfigDiff transaction(ConfigSource config, InputPlugin.Control control) {
+  public ConfigDiff transaction(ConfigSource config, InputPlugin.Control control)
+  {
     PluginTask task = config.loadConfig(PluginTask.class);
 
     TableMetadata tableMetadata;
@@ -176,10 +183,11 @@ public class CassandraInputPlugin implements InputPlugin {
               if (task.getSelect().isEmpty()) {
                 schemaBuilder.add(
                     columnMetadata.getName(), getEmbulkType(columnMetadata.getType()));
-              } else {
+              }
+              else {
                 if (task.getSelect().contains(columnMetadata.getName())) {
-                  schemaBuilder.add(
-                      columnMetadata.getName(), getEmbulkType(columnMetadata.getType()));
+                  schemaBuilder
+                      .add(columnMetadata.getName(), getEmbulkType(columnMetadata.getType()));
                 }
               }
             });
@@ -192,17 +200,21 @@ public class CassandraInputPlugin implements InputPlugin {
 
   @Override
   public ConfigDiff resume(
-      TaskSource taskSource, Schema schema, int taskCount, InputPlugin.Control control) {
+      TaskSource taskSource, Schema schema, int taskCount, InputPlugin.Control control)
+  {
     control.run(taskSource, schema, taskCount);
     return Exec.newConfigDiff();
   }
 
   @Override
   public void cleanup(
-      TaskSource taskSource, Schema schema, int taskCount, List<TaskReport> successTaskReports) {}
+      TaskSource taskSource, Schema schema, int taskCount, List<TaskReport> successTaskReports)
+  {
+  }
 
   private ResultSet fetchPartitionKeys(
-      Session session, String keyspace, String table, List<ColumnMetadata> partitionKeys) {
+      Session session, String keyspace, String table, List<ColumnMetadata> partitionKeys)
+  {
     Selection select = QueryBuilder.select();
     StringJoiner joiner = new StringJoiner(",");
     partitionKeys.forEach(
@@ -219,12 +231,14 @@ public class CassandraInputPlugin implements InputPlugin {
     return session.execute(from);
   }
 
-  static class AsyncPaging implements AsyncFunction<ResultSet, ResultSet> {
+  static class AsyncPaging implements AsyncFunction<ResultSet, ResultSet>
+  {
     private final PageBuilder pageBuilder;
     private final List<ColumnWriter> writers;
     private final Object lock;
 
-    public AsyncPaging(PageBuilder pageBuilder, List<ColumnWriter> writers, Object lock) {
+    public AsyncPaging(PageBuilder pageBuilder, List<ColumnWriter> writers, Object lock)
+    {
       this.pageBuilder = pageBuilder;
       this.writers = writers;
       this.lock = lock;
@@ -232,7 +246,8 @@ public class CassandraInputPlugin implements InputPlugin {
 
     @SuppressWarnings("UnstableApiUsage")
     @Override
-    public ListenableFuture<ResultSet> apply(ResultSet rs) {
+    public ListenableFuture<ResultSet> apply(ResultSet rs)
+    {
       if (rs == null) {
         return null;
       }
@@ -252,7 +267,8 @@ public class CassandraInputPlugin implements InputPlugin {
 
       if (wasLastPage) {
         return Futures.immediateFuture(rs);
-      } else {
+      }
+      else {
         ListenableFuture<ResultSet> moreResults = rs.fetchMoreResults();
         return Futures.transformAsync(moreResults, new AsyncPaging(pageBuilder, writers, lock));
       }
@@ -260,11 +276,13 @@ public class CassandraInputPlugin implements InputPlugin {
   }
 
   private PreparedStatement buildStatement(Session session,
-      List<ColumnMetadata> partitionKeys, PluginTask task) {
+      List<ColumnMetadata> partitionKeys, PluginTask task)
+  {
     Selection select = QueryBuilder.select();
     if (task.getSelect().isEmpty()) {
       select.all();
-    } else {
+    }
+    else {
       task.getSelect().forEach(select::column);
     }
     Where where = select.from(task.getKeyspace(), task.getTable()).where();
@@ -279,7 +297,9 @@ public class CassandraInputPlugin implements InputPlugin {
     return session.prepare(where);
   }
 
-  private Statement bindStatement(PreparedStatement prepared, List<ColumnMetadata> partitionKeys, Row partitionKeysRow) {
+  private Statement bindStatement(PreparedStatement prepared, List<ColumnMetadata> partitionKeys,
+      Row partitionKeysRow)
+  {
     BoundStatement bound = prepared.bind();
     partitionKeys.forEach(
         key -> {
@@ -290,7 +310,8 @@ public class CassandraInputPlugin implements InputPlugin {
     return bound;
   }
 
-  List<ColumnWriter> buildWriters(Schema schema, List<ColumnMetadata> columnMetadatas) {
+  List<ColumnWriter> buildWriters(Schema schema, List<ColumnMetadata> columnMetadatas)
+  {
     ImmutableList.Builder<ColumnWriter> writersBuilder = ImmutableList.builder();
     schema
         .getColumns()
@@ -301,15 +322,14 @@ public class CassandraInputPlugin implements InputPlugin {
                   .filter(metadata -> metadata.getName().equals(column.getName()))
                   .findFirst()
                   .ifPresent(
-                      metadata -> {
-                        writersBuilder.add(ColumnWriterFactory.get(index, metadata.getType()));
-                      });
+                      metadata -> writersBuilder.add(ColumnWriterFactory.get(index, metadata.getType())));
             });
     return writersBuilder.build();
   }
 
   @Override
-  public TaskReport run(TaskSource taskSource, Schema schema, int taskIndex, PageOutput output) {
+  public TaskReport run(TaskSource taskSource, Schema schema, int taskIndex, PageOutput output)
+  {
     PluginTask task = taskSource.loadTask(PluginTask.class);
     int concurrency = task.getConcurrency();
     final Object lock = new Object();
@@ -335,7 +355,8 @@ public class CassandraInputPlugin implements InputPlugin {
           partitionKeyResultSet.fetchMoreResults();
         }
 
-        long chunkNum = Math.abs((long) partitionKeysRow.getPartitionKeyToken().getValue()) % concurrency;
+        long chunkNum =
+            Math.abs((long) partitionKeysRow.getPartitionKeyToken().getValue()) % concurrency;
         if (chunkNum == taskIndex) {
           Statement statement = bindStatement(prepared, partitionKeys, partitionKeysRow);
           ResultSetFuture future = session.executeAsync(statement);
@@ -344,7 +365,8 @@ public class CassandraInputPlugin implements InputPlugin {
               Futures.transformAsync(future, new AsyncPaging(pageBuilder, writers, lock));
           try {
             transform.get();
-          } catch (ExecutionException | InterruptedException e) {
+          }
+          catch (ExecutionException | InterruptedException e) {
             throw new RuntimeException(e);
           }
         }
@@ -357,7 +379,8 @@ public class CassandraInputPlugin implements InputPlugin {
   }
 
   @Override
-  public ConfigDiff guess(ConfigSource config) {
+  public ConfigDiff guess(ConfigSource config)
+  {
     return Exec.newConfigDiff();
   }
 }
