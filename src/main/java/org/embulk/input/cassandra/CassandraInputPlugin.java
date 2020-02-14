@@ -87,10 +87,6 @@ public class CassandraInputPlugin implements InputPlugin {
     @ConfigDefault("[]")
     public List<String> getSelect();
 
-    @Config("where_clause_for_partition_key")
-    @ConfigDefault("null")
-    public Optional<String> getWhereClauseForPartitionKey();
-
     @Config("connect_timeout")
     @ConfigDefault("5000")
     public int getConnectTimeout();
@@ -98,10 +94,6 @@ public class CassandraInputPlugin implements InputPlugin {
     @Config("request_timeout")
     @ConfigDefault("12000")
     public int getRequestTimeout();
-
-    // if you get schema from config
-    //    @Config("columns")
-    //    public SchemaConfig getColumns();
 
     @ConfigInject
     public BufferAllocator getBufferAllocator();
