@@ -77,8 +77,8 @@ public class CassandraInputPlugin implements InputPlugin
     Optional<String> getClustername();
 
     @Config("concurrency")
-    @ConfigDefault("1")
-    Integer getConcurrency();
+    @ConfigDefault("null")
+    Optional<Integer> getConcurrency();
 
     @Config("keyspace")
     String getKeyspace();
@@ -193,7 +193,7 @@ public class CassandraInputPlugin implements InputPlugin
             });
     Schema schema = schemaBuilder.build();
 
-    int taskCount = task.getConcurrency();
+    int taskCount = task.getConcurrency().orElse(Runtime.getRuntime().availableProcessors());
 
     return resume(task.dump(), schema, taskCount, control);
   }
@@ -331,7 +331,7 @@ public class CassandraInputPlugin implements InputPlugin
   public TaskReport run(TaskSource taskSource, Schema schema, int taskIndex, PageOutput output)
   {
     PluginTask task = taskSource.loadTask(PluginTask.class);
-    int concurrency = task.getConcurrency();
+    int concurrency = task.getConcurrency().orElse(Runtime.getRuntime().availableProcessors());
     final Object lock = new Object();
 
     Cluster cluster = getCluster(task);
