@@ -1,31 +1,23 @@
 package org.embulk.input.cassandra;
 
-import com.datastax.driver.core.BoundStatement;
 import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.CodecRegistry;
 import com.datastax.driver.core.ColumnMetadata;
 import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
-import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.SocketOptions;
-import com.datastax.driver.core.Statement;
 import com.datastax.driver.core.TableMetadata;
-import com.datastax.driver.core.TypeCodec;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
-import com.datastax.driver.core.querybuilder.Select;
 import com.datastax.driver.core.querybuilder.Select.Selection;
 import com.datastax.driver.core.querybuilder.Select.Where;
 import com.google.common.collect.ImmutableList;
-import com.google.common.util.concurrent.AsyncFunction;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import org.embulk.config.Config;
 import org.embulk.config.ConfigDefault;
 import org.embulk.config.ConfigDiff;
-import org.embulk.config.ConfigInject;
 import org.embulk.config.ConfigSource;
 import org.embulk.config.Task;
 import org.embulk.config.TaskReport;
@@ -44,10 +36,11 @@ import org.embulk.spi.type.Types;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.StringJoiner;
 import java.util.concurrent.ExecutionException;
 
 public class CassandraInputPlugin implements InputPlugin
@@ -98,8 +91,10 @@ public class CassandraInputPlugin implements InputPlugin
     @ConfigDefault("12000")
     int getRequestTimeout();
 
-    @ConfigInject
-    BufferAllocator getBufferAllocator();
+    @Config("range_mappings")
+    @ConfigDefault("[]")
+    List<List<Long>> getRangeMappings();
+    void setRangeMappings(List<List<Long>> mappings);
   }
 
   private Cluster getCluster(PluginTask task)
@@ -195,6 +190,34 @@ public class CassandraInputPlugin implements InputPlugin
 
     int taskCount = task.getConcurrency().orElse(Runtime.getRuntime().availableProcessors());
 
+    List<List<Long>> tokenRanges = new ArrayList<>();
+    if (taskCount == 1) {
+      List<Long> range = new ArrayList<>();
+      range.add(Long.MIN_VALUE);
+      range.add(Long.MAX_VALUE);
+      tokenRanges.add(range);
+    }
+    else {
+      BigInteger tokenMin = BigInteger.valueOf(Long.MIN_VALUE);
+      BigInteger tokenMax = BigInteger.valueOf(Long.MAX_VALUE);
+      long rangeSize = tokenMax.subtract(tokenMin).divide(BigInteger.valueOf(taskCount)).longValueExact();
+      Long rangeStart = Long.MIN_VALUE;
+      for (int i = 0; i < taskCount; i++) {
+        List<Long> range = new ArrayList<>();
+        range.add(rangeStart);
+        if (i == taskCount - 1) {
+          range.add(Long.MAX_VALUE);
+        }
+        else {
+          range.add(rangeStart + rangeSize - 1);
+        }
+        tokenRanges.add(range);
+        rangeStart = rangeStart + rangeSize;
+      }
+    }
+
+    task.setRangeMappings(tokenRanges);
+
     return resume(task.dump(), schema, taskCount, control);
   }
 
@@ -212,71 +235,8 @@ public class CassandraInputPlugin implements InputPlugin
   {
   }
 
-  private ResultSet fetchPartitionKeys(
-      Session session, String keyspace, String table, List<ColumnMetadata> partitionKeys)
-  {
-    Selection select = QueryBuilder.select();
-    StringJoiner joiner = new StringJoiner(",");
-    partitionKeys.forEach(
-        key -> {
-          select.column(key.getName());
-          joiner.add(key.getName());
-        });
-    select.raw("token(" + joiner.toString() + ")");
-    select.distinct();
-    Select from = select.from(keyspace, table);
-
-    System.out.println(from.getQueryString());
-
-    return session.execute(from);
-  }
-
-  static class AsyncPaging implements AsyncFunction<ResultSet, ResultSet>
-  {
-    private final PageBuilder pageBuilder;
-    private final List<ColumnWriter> writers;
-    private final Object lock;
-
-    public AsyncPaging(PageBuilder pageBuilder, List<ColumnWriter> writers, Object lock)
-    {
-      this.pageBuilder = pageBuilder;
-      this.writers = writers;
-      this.lock = lock;
-    }
-
-    @SuppressWarnings("UnstableApiUsage")
-    @Override
-    public ListenableFuture<ResultSet> apply(ResultSet rs)
-    {
-      if (rs == null) {
-        return null;
-      }
-
-      int remainingsInPage = rs.getAvailableWithoutFetching();
-      for (Row row : rs) {
-        synchronized (lock) {
-          writers.forEach(writer -> writer.write(row, pageBuilder));
-          pageBuilder.addRecord();
-        }
-        if (--remainingsInPage == 0) {
-          break;
-        }
-      }
-
-      boolean wasLastPage = rs.getExecutionInfo().getPagingState() == null;
-
-      if (wasLastPage) {
-        return Futures.immediateFuture(rs);
-      }
-      else {
-        ListenableFuture<ResultSet> moreResults = rs.fetchMoreResults();
-        return Futures.transformAsync(moreResults, new AsyncPaging(pageBuilder, writers, lock));
-      }
-    }
-  }
-
   private PreparedStatement buildStatement(Session session,
-      List<ColumnMetadata> partitionKeys, PluginTask task)
+      List<ColumnMetadata> partitionKeys, PluginTask task, int taskIndex)
   {
     Selection select = QueryBuilder.select();
     if (task.getSelect().isEmpty()) {
@@ -285,29 +245,16 @@ public class CassandraInputPlugin implements InputPlugin
     else {
       task.getSelect().forEach(select::column);
     }
+
+    String[] partitionKeyNames = partitionKeys.stream().map(ColumnMetadata::getName).toArray(String[]::new);
+    List<Long> tokenRange = task.getRangeMappings().get(taskIndex);
     Where where = select.from(task.getKeyspace(), task.getTable()).where();
-    partitionKeys.forEach(
-        columnMetadata ->
-            where.and(
-                QueryBuilder.eq(
-                    columnMetadata.getName(), QueryBuilder.bindMarker(columnMetadata.getName()))));
+    where.and(QueryBuilder.gte(QueryBuilder.token(partitionKeyNames), tokenRange.get(0)))
+        .and(QueryBuilder.lt(QueryBuilder.token(partitionKeyNames), tokenRange.get(1)));
 
     logger.debug(where.getQueryString());
 
     return session.prepare(where);
-  }
-
-  private Statement bindStatement(PreparedStatement prepared, List<ColumnMetadata> partitionKeys,
-      Row partitionKeysRow)
-  {
-    BoundStatement bound = prepared.bind();
-    partitionKeys.forEach(
-        key -> {
-          TypeCodec<Object> typeCodec = CodecRegistry.DEFAULT_INSTANCE.codecFor(key.getType());
-          bound.set(key.getName(), partitionKeysRow.get(key.getName(), typeCodec), typeCodec);
-        });
-
-    return bound;
   }
 
   List<ColumnWriter> buildWriters(Schema schema, List<ColumnMetadata> columnMetadatas)
@@ -331,7 +278,6 @@ public class CassandraInputPlugin implements InputPlugin
   public TaskReport run(TaskSource taskSource, Schema schema, int taskIndex, PageOutput output)
   {
     PluginTask task = taskSource.loadTask(PluginTask.class);
-    int concurrency = task.getConcurrency().orElse(Runtime.getRuntime().availableProcessors());
     final Object lock = new Object();
 
     Cluster cluster = getCluster(task);
@@ -341,38 +287,23 @@ public class CassandraInputPlugin implements InputPlugin
       List<ColumnMetadata> partitionKeys = tableMetadata.getPartitionKey();
       List<ColumnWriter> writers = buildWriters(schema, columnMetadatas);
 
-      ResultSet partitionKeyResultSet =
-          fetchPartitionKeys(session, task.getKeyspace(), task.getTable(), partitionKeys);
+      PreparedStatement prepared = buildStatement(session, partitionKeys, task, taskIndex);
 
-      PreparedStatement prepared = buildStatement(session, partitionKeys, task);
+      BufferAllocator allocator = Exec.getBufferAllocator();
+      try (PageBuilder pageBuilder = new PageBuilder(allocator, schema, output)) {
 
-      BufferAllocator allocator = task.getBufferAllocator();
-      PageBuilder pageBuilder = new PageBuilder(allocator, schema, output);
-
-      for (Row partitionKeysRow : partitionKeyResultSet) {
-        if (partitionKeyResultSet.getAvailableWithoutFetching() == 100
-            && !partitionKeyResultSet.isFullyFetched()) {
-          partitionKeyResultSet.fetchMoreResults();
+        ResultSetFuture future = session.executeAsync(prepared.bind());
+        @SuppressWarnings("UnstableApiUsage")
+        ListenableFuture<ResultSet> transform =
+            Futures.transform(future, new AsyncPaging(pageBuilder, writers, lock));
+        try {
+          transform.get();
+        } catch (ExecutionException | InterruptedException e) {
+          throw new RuntimeException(e);
         }
 
-        long chunkNum =
-            Math.abs((long) partitionKeysRow.getPartitionKeyToken().getValue()) % concurrency;
-        if (chunkNum == taskIndex) {
-          Statement statement = bindStatement(prepared, partitionKeys, partitionKeysRow);
-          ResultSetFuture future = session.executeAsync(statement);
-          @SuppressWarnings("UnstableApiUsage")
-          ListenableFuture<Object> transform =
-              Futures.transformAsync(future, new AsyncPaging(pageBuilder, writers, lock));
-          try {
-            transform.get();
-          }
-          catch (ExecutionException | InterruptedException e) {
-            throw new RuntimeException(e);
-          }
-        }
+        pageBuilder.finish();
       }
-
-      pageBuilder.finish();
     }
 
     return Exec.newTaskReport();

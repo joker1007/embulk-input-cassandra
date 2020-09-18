@@ -6,6 +6,8 @@ import com.datastax.driver.core.LocalDate;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.querybuilder.Insert;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
+import org.apache.thrift.transport.TTransportException;
+import org.cassandraunit.utils.EmbeddedCassandraServerHelper;
 import org.embulk.config.ConfigSource;
 import org.embulk.spi.InputPlugin;
 import org.embulk.spi.Schema;
@@ -45,6 +47,15 @@ public class TestCassandraInputPlugin
       .registerPlugin(InputPlugin.class, "cassandra", CassandraInputPlugin.class)
       .build();
 
+  static {
+    try {
+      EmbeddedCassandraServerHelper.startEmbeddedCassandra();
+    }
+    catch (TTransportException | IOException | InterruptedException e) {
+      throw new RuntimeException(e);
+    }
+  }
+
   private Cluster cluster;
   private Session session;
 
@@ -61,7 +72,7 @@ public class TestCassandraInputPlugin
   {
     String port = System.getenv("CASSANDRA_PORT");
     if (port == null) {
-      port = "9042";
+      port = "9142";
     }
     return port;
   }

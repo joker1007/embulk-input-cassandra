@@ -1,4 +1,5 @@
 type: cassandra
 keyspace: embulk_test
+port: 9142
 table: "test_basic"
 concurrency: 8
