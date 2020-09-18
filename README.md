@@ -53,8 +53,8 @@ But future embulk version may break this plugin.
 - **cluster_name**: cluster name (string, default: `null`)
 - **keyspace**: target keyspace name (string, required)
 - **table**: target table name (string, required)
-- **concurrency**: Thread count of fetcher (integer, default: 1)
-- **select**: select column names (list<string>, required)
+- **concurrency**: Thread count of fetcher (integer, default: count of processors)
+- **select**: select column names (list<string>, default: "all columns")
 - **connect_timeout**: Set connect timeout millisecond (integer, default: `5000`)
 - **request_timeout**: Set each request timeout millisecond (integer, default: `12000`)
 
