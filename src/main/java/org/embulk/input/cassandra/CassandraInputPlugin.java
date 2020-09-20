@@ -179,7 +179,7 @@ public class CassandraInputPlugin implements InputPlugin
       BigInteger tokenMin = BigInteger.valueOf(Long.MIN_VALUE);
       BigInteger tokenMax = BigInteger.valueOf(Long.MAX_VALUE);
       long rangeSize = tokenMax.subtract(tokenMin).divide(BigInteger.valueOf(taskCount)).longValueExact();
-      Long rangeStart = Long.MIN_VALUE;
+      long rangeStart = Long.MIN_VALUE;
       for (int i = 0; i < taskCount; i++) {
         List<Long> range = new ArrayList<>();
         range.add(rangeStart);
@@ -187,21 +187,18 @@ public class CassandraInputPlugin implements InputPlugin
           range.add(Long.MAX_VALUE);
         }
         else {
-          range.add(rangeStart + rangeSize - 1);
+          range.add(rangeStart + rangeSize);
         }
         tokenRanges.add(range);
-        rangeStart = rangeStart + rangeSize;
+        rangeStart = rangeStart + rangeSize + 1;
       }
     }
 
     return tokenRanges;
   }
 
-  @Override
-  public ConfigDiff transaction(ConfigSource config, InputPlugin.Control control)
+  private Schema buildSchema(PluginTask task)
   {
-    PluginTask task = config.loadConfig(PluginTask.class);
-
     TableMetadata tableMetadata;
     try (Cluster cluster = getCluster(task)) {
       tableMetadata = getTableMetadata(cluster, task);
@@ -222,7 +219,15 @@ public class CassandraInputPlugin implements InputPlugin
                 }
               }
             });
-    Schema schema = schemaBuilder.build();
+    return schemaBuilder.build();
+  }
+
+  @Override
+  public ConfigDiff transaction(ConfigSource config, InputPlugin.Control control)
+  {
+    PluginTask task = config.loadConfig(PluginTask.class);
+
+    Schema schema = buildSchema(task);
 
     int taskCount = task.getConcurrency().orElse(Runtime.getRuntime().availableProcessors());
 
@@ -263,7 +268,7 @@ public class CassandraInputPlugin implements InputPlugin
     List<Long> tokenRange = task.getRangeMappings().get(taskIndex);
     Where where = select.from(task.getKeyspace(), task.getTable()).where();
     where.and(QueryBuilder.gte(QueryBuilder.token(partitionKeyNames), tokenRange.get(0)))
-        .and(QueryBuilder.lt(QueryBuilder.token(partitionKeyNames), tokenRange.get(1)));
+        .and(QueryBuilder.lte(QueryBuilder.token(partitionKeyNames), tokenRange.get(1)));
 
     task.getFilterByPartitionKeys().forEach((key, value) -> {
       if (value instanceof List) {
