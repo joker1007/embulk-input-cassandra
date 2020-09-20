@@ -33,10 +33,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 public class TestCassandraInputPlugin
 {
@@ -90,23 +92,17 @@ public class TestCassandraInputPlugin
     session = cluster.connect();
     String createKeyspace = EmbulkTests.readResource(RESOURCE_PATH + "create_keyspace.cql");
     String createTableBasic = EmbulkTests.readResource(RESOURCE_PATH + "create_table_test_basic.cql");
-    String createTableUuid = EmbulkTests.readResource(RESOURCE_PATH + "create_table_test_uuid.cql");
     String createTableComplex = EmbulkTests.readResource(RESOURCE_PATH + "create_table_test_complex.cql");
-    String createTableCounter = EmbulkTests.readResource(RESOURCE_PATH + "create_table_test_counter.cql");
     session.execute(createKeyspace);
     session.execute(createTableBasic);
-    session.execute(createTableUuid);
     session.execute(createTableComplex);
-    session.execute(createTableCounter);
     session.execute("TRUNCATE embulk_test.test_basic");
-    session.execute("TRUNCATE embulk_test.test_uuid");
     session.execute("TRUNCATE embulk_test.test_complex");
-    session.execute("TRUNCATE embulk_test.test_counter");
   }
 
-  private void setupBasic()
+  private void setupBasic(int count)
   {
-    IntStream.rangeClosed(1, 80000).forEach(i -> {
+    IntStream.rangeClosed(1, count).forEach(i -> {
       Boolean bool = i % 2 == 0 ? true : null;
       Insert insert1 = QueryBuilder.insertInto("embulk_test", "test_basic")
           .value("id", "id-" + i)
@@ -165,7 +161,7 @@ public class TestCassandraInputPlugin
   @Test
   public void testBasic() throws IOException
   {
-    setupBasic();
+    setupBasic(80000);
 
     ConfigSource config = loadYamlResource("test_basic.yaml");
     Path outputPath = Paths.get("tmp", "basic_output.csv");
@@ -181,6 +177,29 @@ public class TestCassandraInputPlugin
 
     Stream<String> lines = Files.lines(outputPath);
     assertEquals(80000, lines.count());
+  }
+
+  @Test
+  public void testBasicWithFiltering() throws IOException
+  {
+    setupBasic(100);
+
+    ConfigSource config = loadYamlResource("test_basic_with_filtering.yaml");
+    Path outputPath = Paths.get("tmp", "basic_output_with_filtering.csv");
+    RunResult result = embulk.runInput(config, outputPath);
+    Schema schema = result.getInputSchema();
+
+    List<ColumnMetadata> columnMetadatas = cluster.getMetadata().getKeyspace("embulk_test")
+        .getTable("test_basic").getColumns();
+    assertEquals(8, columnMetadatas.size());
+    for (int i = 0; i < columnMetadatas.size(); i++) {
+      assertEquals(columnMetadatas.get(i).getName(), schema.getColumnName(i));
+    }
+
+    List<String> lines = Files.lines(outputPath).collect(Collectors.toList());
+    assertEquals(2, lines.size());
+    assertTrue(lines.stream().anyMatch(l -> l.startsWith("id-1")));
+    assertTrue(lines.stream().anyMatch(l -> l.startsWith("id-2")));
   }
 
   @Test

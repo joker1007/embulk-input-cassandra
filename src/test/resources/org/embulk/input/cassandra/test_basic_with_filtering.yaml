@@ -3,3 +3,5 @@ keyspace: embulk_test
 port: 9142
 table: "test_basic"
 concurrency: 8
+filter_by_partition_keys:
+  id: ["id-1", "id-2"]

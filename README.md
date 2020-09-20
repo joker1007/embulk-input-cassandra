@@ -55,6 +55,7 @@ But future embulk version may break this plugin.
 - **table**: target table name (string, required)
 - **concurrency**: Thread count of fetcher (integer, default: count of processors)
 - **select**: select column names (list<string>, default: "all columns")
+- **filter_by_partition_keys**: set where clause (list<string> or list<list<string>>, default: [])
 - **connect_timeout**: Set connect timeout millisecond (integer, default: `5000`)
 - **request_timeout**: Set each request timeout millisecond (integer, default: `12000`)
 

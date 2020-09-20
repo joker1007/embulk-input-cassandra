@@ -18,7 +18,7 @@ public class AsyncPaging implements AsyncFunction<ResultSet, ResultSet>
   private final List<ColumnWriter> writers;
   private final Object lock;
   private long counter;
-  private long loggingCount;
+  private long loggingThreshold;
 
   private static Logger logger = LoggerFactory.getLogger(AsyncPaging.class);
 
@@ -28,16 +28,16 @@ public class AsyncPaging implements AsyncFunction<ResultSet, ResultSet>
     this.writers = writers;
     this.lock = lock;
     this.counter = 0L;
-    this.loggingCount = 1L;
+    this.loggingThreshold = 1L;
   }
 
-  private AsyncPaging(PageBuilder pageBuilder, List<ColumnWriter> writers, Object lock, long counter, long loggingCount)
+  private AsyncPaging(PageBuilder pageBuilder, List<ColumnWriter> writers, Object lock, long counter, long loggingThreshold)
   {
     this.pageBuilder = pageBuilder;
     this.writers = writers;
     this.lock = lock;
     this.counter = counter;
-    this.loggingCount = loggingCount;
+    this.loggingThreshold = loggingThreshold;
   }
 
   @SuppressWarnings("UnstableApiUsage")
@@ -54,9 +54,9 @@ public class AsyncPaging implements AsyncFunction<ResultSet, ResultSet>
         writers.forEach(writer -> writer.write(row, pageBuilder));
         pageBuilder.addRecord();
         counter++;
-        if (counter >= loggingCount) {
+        if (counter >= loggingThreshold) {
           logger.info("Loaded {} records", counter);
-          loggingCount = loggingCount * 2;
+          loggingThreshold = loggingThreshold * 2;
         }
       }
       if (--remainingsInPage == 0) {
@@ -71,7 +71,8 @@ public class AsyncPaging implements AsyncFunction<ResultSet, ResultSet>
     }
     else {
       ListenableFuture<ResultSet> moreResults = rs.fetchMoreResults();
-      return Futures.transform(moreResults, new AsyncPaging(pageBuilder, writers, lock, counter, loggingCount));
+      return Futures.transform(moreResults, new AsyncPaging(pageBuilder, writers, lock, counter,
+          loggingThreshold));
     }
   }
 }

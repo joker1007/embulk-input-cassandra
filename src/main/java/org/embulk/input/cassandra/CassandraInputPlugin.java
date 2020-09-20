@@ -3,11 +3,11 @@ package org.embulk.input.cassandra;
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ColumnMetadata;
 import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.SocketOptions;
+import com.datastax.driver.core.Statement;
 import com.datastax.driver.core.TableMetadata;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select.Selection;
@@ -40,6 +40,7 @@ import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 
@@ -82,6 +83,10 @@ public class CassandraInputPlugin implements InputPlugin
     @Config("select")
     @ConfigDefault("[]")
     List<String> getSelect();
+
+    @Config("filter_by_partition_keys")
+    @ConfigDefault("{}")
+    Map<String, Object> getFilterByPartitionKeys();
 
     @Config("connect_timeout")
     @ConfigDefault("5000")
@@ -161,11 +166,39 @@ public class CassandraInputPlugin implements InputPlugin
     }
   }
 
-  @Override
-  public ConfigDiff transaction(ConfigSource config, InputPlugin.Control control)
+  private List<List<Long>> splitTokenRange(int taskCount)
   {
-    PluginTask task = config.loadConfig(PluginTask.class);
+    List<List<Long>> tokenRanges = new ArrayList<>();
+    if (taskCount == 1) {
+      List<Long> range = new ArrayList<>();
+      range.add(Long.MIN_VALUE);
+      range.add(Long.MAX_VALUE);
+      tokenRanges.add(range);
+    }
+    else {
+      BigInteger tokenMin = BigInteger.valueOf(Long.MIN_VALUE);
+      BigInteger tokenMax = BigInteger.valueOf(Long.MAX_VALUE);
+      long rangeSize = tokenMax.subtract(tokenMin).divide(BigInteger.valueOf(taskCount)).longValueExact();
+      long rangeStart = Long.MIN_VALUE;
+      for (int i = 0; i < taskCount; i++) {
+        List<Long> range = new ArrayList<>();
+        range.add(rangeStart);
+        if (i == taskCount - 1) {
+          range.add(Long.MAX_VALUE);
+        }
+        else {
+          range.add(rangeStart + rangeSize);
+        }
+        tokenRanges.add(range);
+        rangeStart = rangeStart + rangeSize + 1;
+      }
+    }
 
+    return tokenRanges;
+  }
+
+  private Schema buildSchema(PluginTask task)
+  {
     TableMetadata tableMetadata;
     try (Cluster cluster = getCluster(task)) {
       tableMetadata = getTableMetadata(cluster, task);
@@ -186,36 +219,19 @@ public class CassandraInputPlugin implements InputPlugin
                 }
               }
             });
-    Schema schema = schemaBuilder.build();
+    return schemaBuilder.build();
+  }
+
+  @Override
+  public ConfigDiff transaction(ConfigSource config, InputPlugin.Control control)
+  {
+    PluginTask task = config.loadConfig(PluginTask.class);
+
+    Schema schema = buildSchema(task);
 
     int taskCount = task.getConcurrency().orElse(Runtime.getRuntime().availableProcessors());
 
-    List<List<Long>> tokenRanges = new ArrayList<>();
-    if (taskCount == 1) {
-      List<Long> range = new ArrayList<>();
-      range.add(Long.MIN_VALUE);
-      range.add(Long.MAX_VALUE);
-      tokenRanges.add(range);
-    }
-    else {
-      BigInteger tokenMin = BigInteger.valueOf(Long.MIN_VALUE);
-      BigInteger tokenMax = BigInteger.valueOf(Long.MAX_VALUE);
-      long rangeSize = tokenMax.subtract(tokenMin).divide(BigInteger.valueOf(taskCount)).longValueExact();
-      Long rangeStart = Long.MIN_VALUE;
-      for (int i = 0; i < taskCount; i++) {
-        List<Long> range = new ArrayList<>();
-        range.add(rangeStart);
-        if (i == taskCount - 1) {
-          range.add(Long.MAX_VALUE);
-        }
-        else {
-          range.add(rangeStart + rangeSize - 1);
-        }
-        tokenRanges.add(range);
-        rangeStart = rangeStart + rangeSize;
-      }
-    }
-
+    List<List<Long>> tokenRanges = splitTokenRange(taskCount);
     task.setRangeMappings(tokenRanges);
 
     return resume(task.dump(), schema, taskCount, control);
@@ -235,8 +251,10 @@ public class CassandraInputPlugin implements InputPlugin
   {
   }
 
-  private PreparedStatement buildStatement(Session session,
-      List<ColumnMetadata> partitionKeys, PluginTask task, int taskIndex)
+  private Statement buildStatement(
+      List<ColumnMetadata> partitionKeys,
+      PluginTask task,
+      int taskIndex)
   {
     Selection select = QueryBuilder.select();
     if (task.getSelect().isEmpty()) {
@@ -250,11 +268,23 @@ public class CassandraInputPlugin implements InputPlugin
     List<Long> tokenRange = task.getRangeMappings().get(taskIndex);
     Where where = select.from(task.getKeyspace(), task.getTable()).where();
     where.and(QueryBuilder.gte(QueryBuilder.token(partitionKeyNames), tokenRange.get(0)))
-        .and(QueryBuilder.lt(QueryBuilder.token(partitionKeyNames), tokenRange.get(1)));
+        .and(QueryBuilder.lte(QueryBuilder.token(partitionKeyNames), tokenRange.get(1)));
 
-    logger.debug(where.getQueryString());
+    task.getFilterByPartitionKeys().forEach((key, value) -> {
+      if (value instanceof List) {
+        @SuppressWarnings("unchecked")
+        Object[] inValues = ((List<Object>) value).toArray();
+        where.and(QueryBuilder.in(key, inValues));
+      }
+      else {
+        where.and(QueryBuilder.eq(key, value));
+      }
+    });
 
-    return session.prepare(where);
+
+    Statement statement = where.setIdempotent(true);
+    logger.debug(statement.toString());
+    return statement;
   }
 
   List<ColumnWriter> buildWriters(Schema schema, List<ColumnMetadata> columnMetadatas)
@@ -287,12 +317,11 @@ public class CassandraInputPlugin implements InputPlugin
       List<ColumnMetadata> partitionKeys = tableMetadata.getPartitionKey();
       List<ColumnWriter> writers = buildWriters(schema, columnMetadatas);
 
-      PreparedStatement prepared = buildStatement(session, partitionKeys, task, taskIndex);
+      Statement statement = buildStatement(partitionKeys, task, taskIndex);
 
       BufferAllocator allocator = Exec.getBufferAllocator();
       try (PageBuilder pageBuilder = new PageBuilder(allocator, schema, output)) {
-
-        ResultSetFuture future = session.executeAsync(prepared.bind());
+        ResultSetFuture future = session.executeAsync(statement);
         @SuppressWarnings("UnstableApiUsage")
         ListenableFuture<ResultSet> transform =
             Futures.transform(future, new AsyncPaging(pageBuilder, writers, lock));
