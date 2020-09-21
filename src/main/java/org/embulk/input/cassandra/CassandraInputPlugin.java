@@ -22,6 +22,7 @@ import org.embulk.config.ConfigSource;
 import org.embulk.config.Task;
 import org.embulk.config.TaskReport;
 import org.embulk.config.TaskSource;
+import org.embulk.exec.PreviewedNoticeError;
 import org.embulk.input.cassandra.writers.ColumnWriter;
 import org.embulk.input.cassandra.writers.ColumnWriterFactory;
 import org.embulk.spi.BufferAllocator;
@@ -328,7 +329,13 @@ public class CassandraInputPlugin implements InputPlugin
         try {
           transform.get();
         } catch (ExecutionException | InterruptedException e) {
-          throw new RuntimeException(e);
+          // for org.embulk.exec.PreviewExecutor
+          if (e.getCause() instanceof PreviewedNoticeError) {
+            throw (PreviewedNoticeError) e.getCause();
+          }
+          else {
+            throw new RuntimeException(e);
+          }
         }
 
         pageBuilder.finish();
