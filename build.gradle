@@ -19,7 +19,7 @@ targetCompatibility = 1.8
 
 
 embulkPlugin {
-    mainClass = "org.embulk.input.kafka.CassandraInputPlugin"
+    mainClass = "org.embulk.input.cassandra.CassandraInputPlugin"
     category = "input"
     type = "cassandra"
 }
