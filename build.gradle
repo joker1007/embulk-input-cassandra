@@ -11,7 +11,7 @@ repositories {
 }
 
 group = "org.embulk.input.cassandra"
-version = "0.2.1"
+version = "0.2.2"
 description = "Cassandra input plugin for Embulk"
 
 sourceCompatibility = 1.8
