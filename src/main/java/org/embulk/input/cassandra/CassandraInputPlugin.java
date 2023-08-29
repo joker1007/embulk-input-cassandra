@@ -12,17 +12,13 @@ import com.datastax.driver.core.TableMetadata;
 import com.datastax.driver.core.querybuilder.QueryBuilder;
 import com.datastax.driver.core.querybuilder.Select.Selection;
 import com.datastax.driver.core.querybuilder.Select.Where;
-import com.google.common.collect.ImmutableList;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import org.embulk.config.Config;
-import org.embulk.config.ConfigDefault;
 import org.embulk.config.ConfigDiff;
+import org.embulk.config.ConfigException;
 import org.embulk.config.ConfigSource;
-import org.embulk.config.Task;
 import org.embulk.config.TaskReport;
 import org.embulk.config.TaskSource;
-import org.embulk.exec.PreviewedNoticeError;
 import org.embulk.input.cassandra.writers.ColumnWriter;
 import org.embulk.input.cassandra.writers.ColumnWriterFactory;
 import org.embulk.spi.BufferAllocator;
@@ -34,6 +30,12 @@ import org.embulk.spi.Schema;
 import org.embulk.spi.Schema.Builder;
 import org.embulk.spi.type.Type;
 import org.embulk.spi.type.Types;
+import org.embulk.util.config.Config;
+import org.embulk.util.config.ConfigDefault;
+import org.embulk.util.config.ConfigMapper;
+import org.embulk.util.config.ConfigMapperFactory;
+import org.embulk.util.config.Task;
+import org.embulk.util.config.TaskMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,7 +49,9 @@ import java.util.concurrent.ExecutionException;
 
 public class CassandraInputPlugin implements InputPlugin
 {
-  private static Logger logger = LoggerFactory.getLogger(CassandraInputPlugin.class);
+  private static final Logger logger = LoggerFactory.getLogger(CassandraInputPlugin.class);
+
+  private final ConfigMapperFactory configMapperFactory = ConfigMapperFactory.withDefault();
 
   public interface PluginTask extends Task
   {
@@ -110,13 +114,9 @@ public class CassandraInputPlugin implements InputPlugin
       builder.addContactPointsWithPorts(new InetSocketAddress(host, task.getPort()));
     }
 
-    if (task.getUsername().isPresent()) {
-      builder.withCredentials(task.getUsername().get(), task.getPassword().orElse(null));
-    }
+    task.getUsername().ifPresent(u -> builder.withCredentials(u, task.getPassword().orElse(null)));
 
-    if (task.getClustername().isPresent()) {
-      builder.withClusterName(task.getClustername().get());
-    }
+    task.getClustername().ifPresent(builder::withClusterName);
 
     builder.withSocketOptions(
         new SocketOptions()
@@ -163,7 +163,7 @@ public class CassandraInputPlugin implements InputPlugin
       case SET:
         return Types.JSON;
       default:
-        throw new RuntimeException("Unsupported cassandra data type");
+        throw new ConfigException("Unsupported cassandra data type");
     }
   }
 
@@ -226,7 +226,8 @@ public class CassandraInputPlugin implements InputPlugin
   @Override
   public ConfigDiff transaction(ConfigSource config, InputPlugin.Control control)
   {
-    PluginTask task = config.loadConfig(PluginTask.class);
+    ConfigMapper configMapper = configMapperFactory.createConfigMapper();
+    PluginTask task = configMapper.map(config, PluginTask.class);
 
     Schema schema = buildSchema(task);
 
@@ -235,7 +236,7 @@ public class CassandraInputPlugin implements InputPlugin
     List<List<Long>> tokenRanges = splitTokenRange(taskCount);
     task.setRangeMappings(tokenRanges);
 
-    return resume(task.dump(), schema, taskCount, control);
+    return resume(task.toTaskSource(), schema, taskCount, control);
   }
 
   @Override
@@ -243,7 +244,7 @@ public class CassandraInputPlugin implements InputPlugin
       TaskSource taskSource, Schema schema, int taskCount, InputPlugin.Control control)
   {
     control.run(taskSource, schema, taskCount);
-    return Exec.newConfigDiff();
+    return configMapperFactory.newConfigDiff();
   }
 
   @Override
@@ -290,7 +291,7 @@ public class CassandraInputPlugin implements InputPlugin
 
   List<ColumnWriter> buildWriters(Schema schema, List<ColumnMetadata> columnMetadatas)
   {
-    ImmutableList.Builder<ColumnWriter> writersBuilder = ImmutableList.builder();
+    List<ColumnWriter> writers = new ArrayList<>();
     schema
         .getColumns()
         .forEach(
@@ -300,15 +301,16 @@ public class CassandraInputPlugin implements InputPlugin
                   .filter(metadata -> metadata.getName().equals(column.getName()))
                   .findFirst()
                   .ifPresent(
-                      metadata -> writersBuilder.add(ColumnWriterFactory.get(index, metadata.getType())));
+                      metadata -> writers.add(ColumnWriterFactory.get(index, metadata.getType())));
             });
-    return writersBuilder.build();
+    return writers;
   }
 
   @Override
   public TaskReport run(TaskSource taskSource, Schema schema, int taskIndex, PageOutput output)
   {
-    PluginTask task = taskSource.loadTask(PluginTask.class);
+    TaskMapper taskMapper = configMapperFactory.createTaskMapper();
+    PluginTask task = taskMapper.map(taskSource, PluginTask.class);
     final Object lock = new Object();
 
     Cluster cluster = getCluster(task);
@@ -329,25 +331,19 @@ public class CassandraInputPlugin implements InputPlugin
         try {
           transform.get();
         } catch (ExecutionException | InterruptedException e) {
-          // for org.embulk.exec.PreviewExecutor
-          if (e.getCause() instanceof PreviewedNoticeError) {
-            throw (PreviewedNoticeError) e.getCause();
-          }
-          else {
-            throw new RuntimeException(e);
-          }
+          throw new RuntimeException(e);
         }
 
         pageBuilder.finish();
       }
     }
 
-    return Exec.newTaskReport();
+    return configMapperFactory.newTaskReport();
   }
 
   @Override
   public ConfigDiff guess(ConfigSource config)
   {
-    return Exec.newConfigDiff();
+    return configMapperFactory.newConfigDiff();
   }
 }

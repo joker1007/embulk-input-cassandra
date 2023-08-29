@@ -9,6 +9,10 @@ import com.datastax.driver.core.querybuilder.QueryBuilder;
 import org.apache.thrift.transport.TTransportException;
 import org.cassandraunit.utils.EmbeddedCassandraServerHelper;
 import org.embulk.config.ConfigSource;
+import org.embulk.formatter.csv.CsvFormatterPlugin;
+import org.embulk.output.file.LocalFileOutputPlugin;
+import org.embulk.spi.FileOutputPlugin;
+import org.embulk.spi.FormatterPlugin;
 import org.embulk.spi.InputPlugin;
 import org.embulk.spi.Schema;
 import org.embulk.test.EmbulkTests;
@@ -42,11 +46,13 @@ import static org.junit.Assert.assertTrue;
 
 public class TestCassandraInputPlugin
 {
-  private static final String RESOURCE_PATH = "org/embulk/input/cassandra/";
+  private static final String RESOURCE_PATH = "/org/embulk/input/cassandra/";
 
   @Rule
   public TestingEmbulk embulk = TestingEmbulk.builder()
       .registerPlugin(InputPlugin.class, "cassandra", CassandraInputPlugin.class)
+      .registerPlugin(FileOutputPlugin.class, "file", LocalFileOutputPlugin.class)
+      .registerPlugin(FormatterPlugin.class, "csv", CsvFormatterPlugin.class)
       .build();
 
   static {
@@ -175,8 +181,9 @@ public class TestCassandraInputPlugin
       assertEquals(columnMetadatas.get(i).getName(), schema.getColumnName(i));
     }
 
-    Stream<String> lines = Files.lines(outputPath);
-    assertEquals(80000, lines.count());
+    try(Stream<String> lines = Files.lines(outputPath)) {
+      assertEquals(80000, lines.count());
+    }
   }
 
   @Test
@@ -196,10 +203,12 @@ public class TestCassandraInputPlugin
       assertEquals(columnMetadatas.get(i).getName(), schema.getColumnName(i));
     }
 
-    List<String> lines = Files.lines(outputPath).collect(Collectors.toList());
-    assertEquals(2, lines.size());
-    assertTrue(lines.stream().anyMatch(l -> l.startsWith("id-1")));
-    assertTrue(lines.stream().anyMatch(l -> l.startsWith("id-2")));
+    try(Stream<String> stream = Files.lines(outputPath)) {
+      List<String> lines = stream.collect(Collectors.toList());
+      assertEquals(2, lines.size());
+      assertTrue(lines.stream().anyMatch(l -> l.startsWith("id-1")));
+      assertTrue(lines.stream().anyMatch(l -> l.startsWith("id-2")));
+    }
   }
 
   @Test
@@ -219,7 +228,8 @@ public class TestCassandraInputPlugin
       assertEquals(columnMetadatas.get(i).getName(), schema.getColumnName(i));
     }
 
-    Stream<String> lines = Files.lines(outputPath);
-    assertEquals(100, lines.count());
+    try(Stream<String> lines = Files.lines(outputPath)) {
+      assertEquals(100, lines.count());
+    }
   }
 }
